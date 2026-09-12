@@ -1,0 +1,8 @@
+-- Super+Shift+T translates the selection. Fire on release so Super is up
+-- before injecting Ctrl+C (Electron has no Wayland primary; Hyprland #14099).
+o.bind(
+  "SUPER + SHIFT + T",
+  "Translate selection",
+  os.getenv("HOME") .. "/.config/omarchy/bin/omarchy-llm-translate",
+  { release = true }
+)

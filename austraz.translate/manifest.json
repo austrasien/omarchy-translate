@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "id": "austraz.translate",
+  "name": "Translate FR↔EN",
+  "version": "1.0.0",
+  "author": "austrasien",
+  "license": "MIT",
+  "description": "Translate selected text French↔English via Lemonade on the NPU (Super+Shift+T).",
+  "kinds": [
+    "overlay"
+  ],
+  "keepLoaded": true,
+  "entryPoints": {
+    "overlay": "Overlay.qml"
+  }
+}

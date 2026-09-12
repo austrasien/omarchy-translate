@@ -1,0 +1,13 @@
+# Copy to ~/.config/omarchy/llm.conf and adjust.
+# Sourced by austraz.translate/llm/lib.sh
+
+LEMONADE_HOST="${LEMONADE_HOST:-http://127.0.0.1:13305}"
+OLLAMA_HOST="${OLLAMA_HOST:-http://127.0.0.1:11434}"
+
+# Preferred Lemonade ids. qwen3-it-4b-FLM crashes FastFlowLM 1.0.4 (empty logits).
+LLM_TEXT_SMALL="${LLM_TEXT_SMALL:-llama3.2-3b-FLM}"
+LLM_TEXT_FULL="${LLM_TEXT_FULL:-Qwen3.6-35B-A3B-NPU2}"
+LLM_VISION="${LLM_VISION:-qwen3vl-it-4b-FLM}"
+OLLAMA_VISION="${OLLAMA_VISION:-qwen2.5vl:3b}"
+
+VISION_KEEP_ALIVE="${VISION_KEEP_ALIVE:-300}"

@@ -1,0 +1,8 @@
+This repository packages two Omarchy user plugins.
+
+`austraz.notifications` is a fork of Omarchy’s built-in `omarchy.notifications`
+(the Omarchy project). Extra lifetime and body-height behavior applies only to
+toasts from `austraz.translate`.
+
+`austraz.translate` is original work: a Lemonade/NPU translation pipeline plus
+an optional overlay (disabled by default).
