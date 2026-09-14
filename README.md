@@ -125,6 +125,11 @@ rm -f ~/.config/omarchy/plugins/austraz.translate \
 omarchy restart shell
 ```
 
+## 🧾 Changelog
+
+### v1.0.1
+- Fix `austraz.notifications` failing to load (`NotificationCard.qml` duplicate `Layout.preferredHeight`), which broke all desktop notifications including low-battery alerts. Translation toast `expandBody` behavior is unchanged.
+
 ## ⚙️ Settings
 
 `~/.config/omarchy/llm.conf` (sourced by `lib.sh`; never committed):

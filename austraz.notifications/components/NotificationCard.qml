@@ -183,7 +183,7 @@ BorderSurface {
         Text {
           id: bodyText
           Layout.fillWidth: true
-          Layout.preferredHeight: bodyText.contentHeight
+          Layout.preferredHeight: root.expandBody ? bodyText.contentHeight : -1
           Layout.topMargin: Style.space(2)
           visible: root.sanitizedBody.length > 0
           text: root.styledBody
@@ -194,7 +194,6 @@ BorderSurface {
           wrapMode: Text.WordWrap
           elide: root.expandBody ? Text.ElideNone : Text.ElideRight
           maximumLineCount: root.expandBody ? 80 : 3
-          Layout.preferredHeight: root.expandBody ? bodyText.contentHeight : -1
         }
       }
     }
