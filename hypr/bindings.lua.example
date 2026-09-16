@@ -1,8 +1,8 @@
--- Super+Shift+T translates the selection. Fire on release so Super is up
--- before injecting Ctrl+C (Electron has no Wayland primary; Hyprland #14099).
+-- Super+Shift+T: freeze + region picker, then OCR and FR↔EN.
+-- Fire on release so Super is up before slurp (Super+drag would move windows).
 o.bind(
   "SUPER + SHIFT + T",
-  "Translate selection",
-  os.getenv("HOME") .. "/.config/omarchy/bin/omarchy-llm-translate",
+  "Translate region",
+  os.getenv("HOME") .. "/.config/omarchy/bin/omarchy-llm-translate-region",
   { release = true }
 )

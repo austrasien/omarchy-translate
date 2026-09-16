@@ -268,10 +268,11 @@ lemonade_pick_text_model() {
       if ((.id // "") | test("(?i)(1b|1\\.5b|3b|4b)")) then 0
       elif ((.id // "") | test("(?i)(7b|8b)")) then 1
       else 2 end;
-    [.data[]? | select(is_text)] as $all
+    [.data[]? | select(available and (is_blocked | not))] as $dl
+    | [.data[]? | select(is_text)] as $all
     | (
         if ($m | length) > 0 then
-          $all | map(select(
+          $dl | map(select(
             .id == $m
             or (.id | startswith($m))
             or ((.id | canon) == ($m | canon))

@@ -20,10 +20,12 @@ MODE=run
 STDOUT=0
 FILE=""
 QUIET=0
+REGION=0
 
 while (( $# )); do
   case "$1" in
     --menu) MODE=menu; shift ;;
+    --region) REGION=1; shift ;;
     --stdout) STDOUT=1; QUIET=1; shift ;;
     --quiet) QUIET=1; shift ;;
     --file)
@@ -32,7 +34,7 @@ while (( $# )); do
       ;;
     --) shift; break ;;
     -h | --help)
-      printf '%s\n' "Usage: omarchy-llm-translate [--menu] [--stdout] [--file PATH]"
+      printf '%s\n' "Usage: omarchy-llm-translate [--menu] [--region] [--stdout] [--file PATH]"
       exit 0
       ;;
     *) break ;;
@@ -101,11 +103,42 @@ trim_text() {
   printf '%s' "$1" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//'
 }
 
+# Same freeze + slurp as PRINT / Capture → Screenshot. No toast until the
+# rectangle is confirmed — a critical translate toast would sit on the picker.
+grab_region_ocr() {
+  local freeze_pid="" selection="" img text langs
+  llm_log "translate region: waiting for slurp"
+  {
+    read -r freeze_pid
+    read -r selection
+  } < <(omarchy-capture-region region --keep-freeze) || true
+  if [[ -z ${selection:-} ]]; then
+    [[ -n ${freeze_pid:-} ]] && kill "$freeze_pid" 2>/dev/null || true
+    return 1
+  fi
+  img=$(mktemp "$WORKDIR/region-XXXXXX.png")
+  if ! grim -g "$selection" "$img"; then
+    [[ -n ${freeze_pid:-} ]] && kill "$freeze_pid" 2>/dev/null || true
+    rm -f "$img"
+    return 1
+  fi
+  [[ -n ${freeze_pid:-} ]] && kill "$freeze_pid" 2>/dev/null || true
+  langs=${OMARCHY_OCR_LANGS:-eng+fra}
+  text=$(tesseract "$img" stdout --oem 1 --psm 6 -l "$langs" --dpi 300 \
+    -c preserve_interword_spaces=1 2>/dev/null) || text=""
+  rm -f "$img"
+  text=$(trim_text "$text")
+  [[ -n $text ]] || return 2
+  printf '%s' "$text"
+}
+
 load_source_text() {
   local text=""
   if [[ -n $FILE ]]; then
     [[ -f $FILE ]] || return 1
     text=$(cat -- "$FILE")
+  elif ((REGION)); then
+    text=$(grab_region_ocr) || return 1
   elif ((STDOUT)) && [[ ! -t 0 ]]; then
     # Overlay pipes the source on stdin. Hyprland binds attach /dev/null —
     # that is not a source, so we must not `cat` it.
@@ -154,11 +187,23 @@ if [[ $MODE == menu ]]; then
   exit 0
 fi
 
-text=$(load_source_text) || {
-  llm_log "translate skip: no selection"
-  ((QUIET)) || llm_notify -u normal "Translation" "Aucune sélection"
-  exit 3
-}
+if ((REGION)); then
+  text=$(grab_region_ocr)
+  status=$?
+  if ((status == 1)); then
+    exit 0
+  fi
+  if ((status != 0)) || [[ -z $text ]]; then
+    ((QUIET)) || llm_notify -u normal "Translation" "Aucun texte dans la zone"
+    exit 3
+  fi
+else
+  text=$(load_source_text) || {
+    llm_log "translate skip: no selection"
+    ((QUIET)) || llm_notify -u normal "Translation" "Aucune sélection"
+    exit 3
+  }
+fi
 
 if (( ${#text} > MAX_CHARS )); then
   ((QUIET)) || llm_notify -u normal "Translation" "Sélection trop longue"
