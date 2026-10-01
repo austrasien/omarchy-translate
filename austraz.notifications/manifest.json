@@ -1,11 +1,11 @@
 {
   "schemaVersion": 1,
   "id": "austraz.notifications",
-  "name": "Notifications (translate toasts)",
-  "version": "1.0.1",
+  "name": "Notifications",
+  "version": "1.0.4",
   "author": "austrasien",
   "license": "MIT",
-  "description": "Omarchy notification daemon clone. Translation toasts show full body; 3s per line; sticky beyond 3 lines. Other apps keep stock 3-line clamp.",
+  "description": "Omarchy notification daemon clone. Translation toasts show full body. Right-click a Screenshot renamed toast to copy the image.",
   "kinds": [
     "service"
   ],

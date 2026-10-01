@@ -48,7 +48,7 @@ Omarchy already has screenshots, OCR, and notifications. This repo wires a **one
 | `austraz.translate/llm/lib.sh` | Lemonade client, NPU slot, **never evict a foreign model** |
 | `austraz.translate/bin/omarchy-llm-translate-region` | PATH wrapper for Super+Shift+T (`--region`) |
 | `austraz.translate/bin/omarchy-llm-translate` | PATH wrapper without `--region` (selection / `--file`) |
-| `austraz.notifications/` | Clone of `omarchy.notifications` — full body + custom lifetime **only** for `app=austraz.translate` |
+| `austraz.notifications/` | Clone of `omarchy.notifications` — full body + custom lifetime **only** for `app=austraz.translate`; right-click a **Screenshot renamed** toast copies the image |
 | `austraz.translate/Overlay.qml` | Optional cursor chip (`--menu`). **Leave disabled** |
 
 ## ✨ Key Features
@@ -69,6 +69,7 @@ Omarchy already has screenshots, OCR, and notifications. This repo wires a **one
 - `--app-name austraz.translate`, titles **Translation** / **Translation copied**.
 - **3s per visual line** (~42 columns). More than three lines → **critical** (stays until you dismiss).
 - Other notifications keep stock duration and the 3-line clamp.
+- **Screenshot renamed** (from [image-autoname](https://github.com/austrasien/omarchy-image-autoname)): left-click opens the editor; **right-click copies the PNG** to the clipboard, then dismisses. Other toasts still just close on right-click.
 
 ### 🔒 NPU queue
 - Shares `${XDG_RUNTIME_DIR}/image-autoname.lock`.
@@ -130,6 +131,10 @@ omarchy restart shell
 
 ## 🧾 Changelog
 
+### v1.2.0
+- Right-click a **Screenshot renamed** (or stock **Screenshot saved**) toast to copy the image pixels, then dismiss. Needs `copy-to-clipboard.sh` next to the plugin (install.sh chmods it).
+- Cursor CLI toasts (`org.omarchy.agent`) use the launcher cube instead of Qt’s missing-texture square, when `~/.local/share/pixmaps/cursor-cli.png` exists.
+
 ### v1.1.0
 - **Super+Shift+T** draws a screenshot region (freeze + slurp), OCRs it (`eng+fra`), then translates. Bind `omarchy-llm-translate-region`.
 - Default Lemonade id in the example conf is `qwen3.5-4b-FLM` (one slot for chat + vision). Picker honors that id even when Lemonade tags it `vision`.
@@ -157,6 +162,7 @@ Do **not** set `qwen3-it:4b` / `qwen3-it-4b-FLM` — FastFlowLM 1.0.4 SIGABRTs o
 3. Esc on the picker → nothing (no toast).
 4. More than three wrapped lines → toast stays until you right-click dismiss.
 5. A Discord / volume toast still clamps to three lines and expires as before.
+6. After [image-autoname](https://github.com/austrasien/omarchy-image-autoname) renames a capture: left-click the toast opens the editor; right-click copies the image (paste into a chat to check).
 
 ## ⚖️ License
 

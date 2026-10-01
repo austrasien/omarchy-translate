@@ -396,6 +396,20 @@ Item {
     dismissPopup(index)
   }
 
+  // Right-click: copy screenshot pixels to the clipboard when the toast is a
+  // capture/rename notification, then dismiss. Other toasts still just close.
+  function invokePopupRight(index) {
+    if (index < 0 || index >= popupModel.count) return
+    var entry = popupModel.get(index)
+    if (NotificationLogic.shouldCopyImageOnRightClick(entry)) {
+      var path = NotificationLogic.localImageFile(entry.image)
+      var home = Quickshell.env("HOME")
+      var helper = home + "/.config/omarchy/plugins/austraz.notifications/copy-to-clipboard.sh"
+      Util.execArgv([helper, path])
+    }
+    dismissPopup(index)
+  }
+
   // Try to focus an existing Hyprland window matching the notification's
   // sender. The helper handles case-insensitive class matching.
   function focusApp(entry) {
@@ -1070,6 +1084,7 @@ Item {
 
               onCloseRequested: service.dismissPopup(cardSlot.index)
               onCardClicked: service.invokePopupDefault(cardSlot.index)
+              onCardRightClicked: service.invokePopupRight(cardSlot.index)
             }
           }
         }

@@ -325,6 +325,16 @@ function localImageFile(value) {
   return s.charAt(0) === "/" ? s : ""
 }
 
+// Screenshot toasts (stock capture + image-autoname rename) carry the PNG
+// in image-path. Right-click copies those pixels; other image-path values
+// (avatars, themed icons) keep the stock dismiss-only right click.
+function shouldCopyImageOnRightClick(entry) {
+  var summary = String((entry || {}).summary || "")
+  if (summary !== "Screenshot renamed" && summary.indexOf("Screenshot saved") !== 0)
+    return false
+  return localImageFile((entry || {}).image).length > 0
+}
+
 // The entry as it should hit the disk, plus the copies that make it true.
 // File-backed images redirect to their copy under imagesDir; dead image://
 // URLs drop to "" (the card falls back to the app icon). Already-redirected
@@ -470,6 +480,7 @@ if (typeof module !== "undefined") {
     popupFileName: popupFileName,
     imageStem: imageStem,
     localImageFile: localImageFile,
+    shouldCopyImageOnRightClick: shouldCopyImageOnRightClick,
     persistablePopup: persistablePopup,
     serializePopup: serializePopup,
     parsePopupFiles: parsePopupFiles,

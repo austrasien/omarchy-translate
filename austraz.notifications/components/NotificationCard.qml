@@ -34,9 +34,12 @@ BorderSurface {
 
   signal closeRequested()
   signal cardClicked()
+  signal cardRightClicked()
   // Prefer per-notification media/avatar data, then fall back to the app icon.
-  // The `check` flag avoids Qt's missing-texture placeholder for unknown names.
-  readonly property string smallIconSource: image.length > 0 ? image : iconSource(appIcon)
+  // Route both through iconSource(): notify-send --icon NAME puts the themed
+  // name in image-path, and feeding that string to Image is what paints Qt's
+  // pink/black missing-texture square.
+  readonly property string smallIconSource: iconSource(image.length > 0 ? image : appIcon)
   readonly property bool hasGlyph: glyph.length > 0
   readonly property bool compactGlyph: NotificationLogic.shouldRenderCompactGlyph(glyph, smallIconSource, singleLineToast)
   readonly property bool hasSmallIcon: smallIconSource.length > 0
@@ -60,6 +63,11 @@ BorderSurface {
     if (value.length === 0) return ""
     if (value.indexOf("file://") === 0 || value.indexOf("image://") === 0) return value
     if (value.charAt(0) === "/") return Util.fileUrl(value)
+    // Cursor CLI notifies as org.omarchy.agent. Prefer the launcher cube file
+    // over Qt's themed lookup: notify-send puts the name in image-path, and a
+    // stale icon cache returns a URL that Image paints as the pink/black square.
+    if (value === "org.omarchy.agent" || value === "cursor-cli")
+      return Util.fileUrl(Quickshell.env("HOME") + "/.local/share/pixmaps/cursor-cli.png")
     return Quickshell.iconPath(value, true)
   }
 
@@ -84,7 +92,7 @@ BorderSurface {
     acceptedButtons: Qt.LeftButton | Qt.RightButton
     onClicked: function(mouse) {
       if (mouse.button === Qt.RightButton) {
-        root.closeRequested()
+        root.cardRightClicked()
       } else {
         root.cardClicked()
       }

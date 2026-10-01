@@ -29,7 +29,8 @@ chmod +x \
   "$ROOT/austraz.translate/bin/omarchy-llm-translate" \
   "$ROOT/austraz.translate/bin/omarchy-llm-translate-region" \
   "$ROOT/austraz.translate/llm/translate.sh" \
-  "$ROOT/austraz.translate/capture-primary.sh"
+  "$ROOT/austraz.translate/capture-primary.sh" \
+  "$ROOT/austraz.notifications/copy-to-clipboard.sh"
 
 ln -sfn "$PLUGINS/austraz.translate/bin/omarchy-llm-translate" \
   "$BIN/omarchy-llm-translate"
