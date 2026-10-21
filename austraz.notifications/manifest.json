@@ -2,10 +2,10 @@
   "schemaVersion": 1,
   "id": "austraz.notifications",
   "name": "Notifications",
-  "version": "1.0.4",
+  "version": "1.0.5",
   "author": "austrasien",
   "license": "MIT",
-  "description": "Omarchy notification daemon clone. Translation toasts show full body. Right-click a Screenshot renamed toast to copy the image.",
+  "description": "Omarchy notification daemon clone. Translation toasts show full body. Right-click a Screenshot renamed toast to copy the image. Popups show on the built-in screen only.",
   "kinds": [
     "service"
   ],
