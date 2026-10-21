@@ -365,6 +365,16 @@ Item {
     // outlives the shell, which installer toasts depend on: they restart it.
     var argv = NotificationLogic.parseExecArgv(entry ? entry.execArgv : "")
     if (argv) {
+      // Taildrop (and other --exec xdg-open toasts): xdg-open runs nvim.desktop
+      // with no terminal, so the click looks like a no-op. open-file.sh opens
+      // markdown in omawrite and other Terminal=true handlers in a real TUI.
+      var prog = String(argv[0] || "")
+      var slash = prog.lastIndexOf("/")
+      var base = slash >= 0 ? prog.slice(slash + 1) : prog
+      if (base === "xdg-open") {
+        var helper = Quickshell.env("HOME") + "/.config/omarchy/plugins/austraz.notifications/open-file.sh"
+        argv = [helper].concat(argv.slice(1))
+      }
       Util.execArgv(argv)
       dismissPopup(index)
       return

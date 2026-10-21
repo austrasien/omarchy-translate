@@ -2,10 +2,10 @@
   "schemaVersion": 1,
   "id": "austraz.notifications",
   "name": "Notifications",
-  "version": "1.0.5",
+  "version": "1.0.6",
   "author": "austrasien",
   "license": "MIT",
-  "description": "Omarchy notification daemon clone. Translation toasts show full body. Right-click a Screenshot renamed toast to copy the image. Popups show on the built-in screen only.",
+  "description": "Omarchy notification daemon clone. Translation toasts show full body. Left-click xdg-open (Taildrop) actually opens the file. Right-click a Screenshot renamed toast to copy the image. Popups show on the built-in screen only.",
   "kinds": [
     "service"
   ],
