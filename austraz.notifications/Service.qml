@@ -962,9 +962,18 @@ Item {
   // stacked toast cards. Layer is Overlay, exclusionMode Ignore, no
   // keyboard focus — popups are passive surfaces and must never steal input
   // from the focused application.
+  //
+  // Popups only go to the built-in panel (eDP-*); external monitors stay
+  // clean. With the lid closed and no eDP output, fall back to every screen
+  // so notifications never vanish entirely.
+
+  readonly property var popupScreens: {
+    const internal = Quickshell.screens.filter(s => s.name.startsWith("eDP"))
+    return internal.length > 0 ? internal : Quickshell.screens
+  }
 
   Variants {
-    model: Quickshell.screens
+    model: service.popupScreens
 
     PanelWindow {
       id: popupWindow
