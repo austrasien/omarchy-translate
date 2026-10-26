@@ -45,6 +45,19 @@ Item {
   // pull notification popups away from the expected top-right location.
   // Falls back to the bar's default size (26 horizontal / 28 vertical) when
   // shell.bar isn't reachable so the popup never lands on top of the bar.
+  // The minimap (austraz.minimap) sits in a screen corner; when it takes
+  // the top-right one, toasts move to the top-left so they never cover it.
+  property var minimapConfig: ({})
+  readonly property bool toastsLeft: minimapConfig.visible !== false
+    && minimapConfig.corner === "top-right"
+  FileView {
+    path: Quickshell.env("HOME") + "/.config/omarchy/minimap.json"
+    watchChanges: true
+    printErrors: false
+    onFileChanged: reload()
+    onLoaded: { try { service.minimapConfig = JSON.parse(text() || "{}") || ({}) } catch (e) {} }
+    onLoadFailed: service.minimapConfig = ({})
+  }
   readonly property string barPosition: shell && shell.barConfig ? String(shell.barConfig.position || "top") : "top"
   readonly property bool barVertical: barPosition === "left" || barPosition === "right"
   readonly property int defaultBarSize: barVertical ? Style.bar.sizeVertical : Style.bar.sizeHorizontal
@@ -1012,10 +1025,12 @@ Item {
 
       ColumnLayout {
         id: popupColumn
-        anchors.right: parent.right
+        anchors.right: service.toastsLeft ? undefined : parent.right
+        anchors.left: service.toastsLeft ? parent.left : undefined
         anchors.top: parent.top
         anchors.topMargin: popupWindow.popupPlacement.margins.top
         anchors.rightMargin: popupWindow.popupPlacement.margins.right
+        anchors.leftMargin: service.barPosition === "left" ? service.barClearance : Style.gapsOut
         spacing: Style.space(8)
 
         Repeater {
@@ -1089,7 +1104,8 @@ Item {
 
             NotificationCard {
               id: card
-              anchors.right: parent.right
+              anchors.right: service.toastsLeft ? undefined : parent.right
+              anchors.left: service.toastsLeft ? parent.left : undefined
               app: cardSlot.app
               appIcon: cardSlot.appIcon
               summary: cardSlot.summary
