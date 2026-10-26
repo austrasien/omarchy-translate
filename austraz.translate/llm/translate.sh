@@ -7,6 +7,7 @@ set -uo pipefail
 LLM_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 # shellcheck disable=SC1091
 source "$LLM_DIR/lib.sh"
+export LLM_PRIORITY=interactive LLM_CLIENT=translate LLM_LABEL=Translation
 
 WORKDIR="${XDG_RUNTIME_DIR:-/tmp}/omarchy-llm"
 mkdir -p "$WORKDIR"
@@ -213,7 +214,7 @@ fi
 chars=${#text}
 kind=small
 timeout_sec=30
-# One shot: do not let llm_chat retry and stretch past 30s.
+# One shot: do not let llm_chat retry and stretch past 30s (plus any npu-queue wait).
 LLM_CHAT_RETRY=0
 export LLM_CHAT_RETRY
 max_tokens=$((chars + 128))
@@ -341,7 +342,7 @@ else:
 '
 }
 
-translated=$(printf '%s' "$wrap" | timeout --signal=TERM --kill-after=2 30 \
+translated=$(printf '%s' "$wrap" | timeout --signal=TERM --kill-after=2 $((${LLM_QUEUE_WAIT:-0} + 30)) \
   bash -c 'source "$1"; llm_chat "$2" "$3" "$4" "$5"' \
   bash "$LLM_DIR/lib.sh" "$kind" "$timeout_sec" "$max_tokens" 8) || {
   status=$?
@@ -364,7 +365,7 @@ if [[ -n $translated ]] && same_lang "$src_lang" "$translated"; then
   else
     wrap=$'FRENCH → ENGLISH. Output English only.\n\n'"$text"
   fi
-  retry=$(printf '%s' "$wrap" | timeout --signal=TERM --kill-after=2 15 \
+  retry=$(printf '%s' "$wrap" | timeout --signal=TERM --kill-after=2 $((${LLM_QUEUE_WAIT:-0} + 15)) \
     bash -c 'source "$1"; llm_chat "$2" "$3" "$4" "$5"' \
     bash "$LLM_DIR/lib.sh" "$kind" 15 "$max_tokens" 8) || retry=""
   retry=$(printf '%s' "$retry" | tr -d '\r' | extract_translation) || retry=""

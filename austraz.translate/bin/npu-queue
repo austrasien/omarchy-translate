@@ -1,0 +1,305 @@
+#!/usr/bin/env python3
+"""npu-queue: priority FIFO in front of Lemonade so only one inference hits the NPU.
+
+Clients talk to 127.0.0.1:13306 instead of 13305. Inference requests wait in a
+queue (interactive > agent > background, FIFO within a level); everything else
+(health, models, load...) passes straight through. A request whose client hangs
+up while waiting is dropped before it ever reaches the NPU.
+
+Headers (all optional):
+  X-NPU-Priority  interactive | agent | background   (default: agent)
+  X-NPU-Max-Wait  seconds to wait in queue before 503 (default: NPU_QUEUE_MAX_WAIT)
+  X-NPU-Client    label shown in `npu-queue status`
+
+  npu-queue            run the server
+  npu-queue status     show running + waiting requests
+"""
+
+import http.client
+import http.server
+import itertools
+import json
+import os
+import select
+import socket
+import sys
+import threading
+import time
+import urllib.request
+
+LISTEN = ("127.0.0.1", int(os.environ.get("NPU_QUEUE_PORT", "13306")))
+UPSTREAM = (os.environ.get("NPU_QUEUE_UPSTREAM_HOST", "127.0.0.1"),
+            int(os.environ.get("NPU_QUEUE_UPSTREAM_PORT", "13305")))
+MAX_WAIT = float(os.environ.get("NPU_QUEUE_MAX_WAIT", "600"))
+MAX_WAITING = int(os.environ.get("NPU_QUEUE_MAX_WAITING", "32"))
+# No upstream byte for this long = backend hung (e.g. FLM after suspend): 504, free the slot.
+# 32k ctx at ~65 tok/s prefill is ~8 min, so keep this above that.
+INACTIVITY = float(os.environ.get("NPU_QUEUE_INACTIVITY", "600"))
+
+PRIORITIES = {"interactive": 0, "agent": 1, "background": 2}
+INFERENCE_SUFFIXES = ("/chat/completions", "/completions", "/responses",
+                      "/messages", "/embeddings", "/api/chat", "/api/generate")
+HOP_BY_HOP = {"connection", "keep-alive", "proxy-authenticate", "proxy-authorization",
+              "te", "trailer", "trailers", "transfer-encoding", "upgrade", "host",
+              "content-length", "expect"}
+
+
+def log(msg):
+    print(msg, file=sys.stderr, flush=True)
+
+
+class Ticket:
+    def __init__(self, seq, priority, client, path):
+        self.seq = seq
+        self.priority = priority
+        self.client = client
+        self.path = path
+        self.enqueued = time.monotonic()
+        self.started = None
+
+    def key(self):
+        return (PRIORITIES[self.priority], self.seq)
+
+    def view(self, now):
+        v = {"client": self.client, "priority": self.priority, "path": self.path,
+             "waited_s": round((self.started or now) - self.enqueued, 1)}
+        if self.started is not None:
+            v["running_s"] = round(now - self.started, 1)
+        return v
+
+
+class Gate:
+    """One inference at a time; strict priority, FIFO within a priority."""
+
+    def __init__(self):
+        self.cond = threading.Condition()
+        self.waiting = []
+        self.running = None
+        self.seq = itertools.count()
+        self.served = 0
+        self.dropped = 0
+
+    def ticket(self, priority, client, path):
+        return Ticket(next(self.seq), priority, client, path)
+
+    def acquire(self, t, max_wait, client_gone):
+        """Return 'ok', 'gone', 'timeout' or 'full'."""
+        with self.cond:
+            if len(self.waiting) >= MAX_WAITING:
+                return "full"
+            self.waiting.append(t)
+            while True:
+                if self.running is None and min(self.waiting, key=Ticket.key) is t:
+                    self.waiting.remove(t)
+                    self.running = t
+                    t.started = time.monotonic()
+                    return "ok"
+                self.cond.wait(0.5)
+                reason = None
+                if client_gone():
+                    reason = "gone"
+                elif time.monotonic() - t.enqueued > max_wait:
+                    reason = "timeout"
+                if reason:
+                    self.waiting.remove(t)
+                    self.dropped += 1
+                    self.cond.notify_all()
+                    return reason
+
+    def release(self, t):
+        with self.cond:
+            if self.running is t:
+                self.running = None
+                self.served += 1
+            self.cond.notify_all()
+
+    def status(self):
+        now = time.monotonic()
+        with self.cond:
+            order = sorted(self.waiting, key=Ticket.key)
+            return {
+                "running": self.running.view(now) if self.running else None,
+                "waiting": [dict(t.view(now), position=i + 1) for i, t in enumerate(order)],
+                "served": self.served,
+                "dropped": self.dropped,
+            }
+
+
+GATE = Gate()
+
+
+class Handler(http.server.BaseHTTPRequestHandler):
+    protocol_version = "HTTP/1.1"
+    server_version = "npu-queue"
+
+    def log_message(self, fmt, *args):
+        pass
+
+    def do_GET(self):
+        if self.path.split("?")[0] == "/queue":
+            self.send_json(200, GATE.status())
+            return
+        self.handle_any()
+
+    do_POST = do_PUT = do_DELETE = do_PATCH = do_OPTIONS = do_HEAD = \
+        lambda self: self.handle_any()
+
+    def send_json(self, code, obj):
+        body = json.dumps(obj, ensure_ascii=False).encode()
+        self.send_response(code)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(body)))
+        self.send_header("Connection", "close")
+        self.end_headers()
+        self.wfile.write(body)
+        self.close_connection = True
+
+    def read_body(self):
+        if self.headers.get("Transfer-Encoding", "").lower() == "chunked":
+            parts = []
+            while True:
+                size = int(self.rfile.readline().split(b";")[0].strip() or b"0", 16)
+                if size == 0:
+                    self.rfile.readline()
+                    break
+                parts.append(self.rfile.read(size))
+                self.rfile.readline()
+            return b"".join(parts)
+        n = int(self.headers.get("Content-Length") or 0)
+        return self.rfile.read(n) if n else b""
+
+    def client_gone(self):
+        try:
+            readable, _, _ = select.select([self.connection], [], [], 0)
+            if not readable:
+                return False
+            return self.connection.recv(1, socket.MSG_PEEK) == b""
+        except OSError:
+            return True
+
+    def is_inference(self):
+        path = self.path.split("?")[0].rstrip("/")
+        return (self.command == "POST" and path.endswith(INFERENCE_SUFFIXES)
+                and not path.endswith("/count_tokens"))
+
+    def handle_any(self):
+        body = self.read_body()
+        if not self.is_inference():
+            self.forward(body)
+            return
+
+        prio = (self.headers.get("X-NPU-Priority") or "agent").strip().lower()
+        if prio not in PRIORITIES:
+            prio = "agent"
+        try:
+            max_wait = float(self.headers.get("X-NPU-Max-Wait") or MAX_WAIT)
+        except ValueError:
+            max_wait = MAX_WAIT
+        client = (self.headers.get("X-NPU-Client")
+                  or (self.headers.get("User-Agent") or "?").split()[0])[:60]
+        t = GATE.ticket(prio, client, self.path.split("?")[0])
+        result = GATE.acquire(t, max_wait, self.client_gone)
+        if result != "ok":
+            log(f"{result}: {client} {prio} after {time.monotonic() - t.enqueued:.1f}s")
+            if result != "gone":
+                self.send_json(503, {"error": {
+                    "type": "npu_queue_" + result,
+                    "message": f"npu-queue: NPU busy ({result}), try again later"}})
+            self.close_connection = True
+            return
+        log(f"start: {client} {prio} waited {t.started - t.enqueued:.1f}s")
+        try:
+            self.forward(body)
+        finally:
+            GATE.release(t)
+            log(f"done: {client} {prio} ran {time.monotonic() - t.started:.1f}s")
+
+    def forward(self, body):
+        headers = {k: v for k, v in self.headers.items()
+                   if k.lower() not in HOP_BY_HOP and not k.lower().startswith("x-npu-")}
+        headers["Host"] = f"{UPSTREAM[0]}:{UPSTREAM[1]}"
+        headers["Connection"] = "close"
+        if body or self.command in ("POST", "PUT", "PATCH"):
+            headers["Content-Length"] = str(len(body))
+        conn = http.client.HTTPConnection(*UPSTREAM, timeout=INACTIVITY)
+        sent_headers = False
+        try:
+            conn.request(self.command, self.path, body=body or None, headers=headers)
+            resp = conn.getresponse()
+            length = resp.getheader("Content-Length")
+            chunked = length is None and self.command != "HEAD" and resp.status not in (204, 304)
+            self.send_response(resp.status, resp.reason)
+            for k, v in resp.getheaders():
+                if k.lower() not in HOP_BY_HOP:
+                    self.send_header(k, v)
+            if length is not None:
+                self.send_header("Content-Length", length)
+            if chunked:
+                self.send_header("Transfer-Encoding", "chunked")
+            self.send_header("Connection", "close")
+            self.end_headers()
+            sent_headers = True
+            while True:
+                data = resp.read1(65536)
+                if not data:
+                    break
+                if chunked:
+                    self.wfile.write(b"%x\r\n%s\r\n" % (len(data), data))
+                else:
+                    self.wfile.write(data)
+                self.wfile.flush()
+            if chunked:
+                self.wfile.write(b"0\r\n\r\n")
+                self.wfile.flush()
+        except (BrokenPipeError, ConnectionResetError):
+            log(f"client hung up: {self.path}")
+        except socket.timeout:
+            log(f"upstream silent for {INACTIVITY:.0f}s: {self.path}")
+            if not sent_headers:
+                self.send_json(504, {"error": {"type": "npu_queue_upstream_timeout",
+                                               "message": "npu-queue: backend stopped responding"}})
+        except OSError as e:
+            log(f"upstream error: {e}")
+            if not sent_headers:
+                self.send_json(502, {"error": {"type": "npu_queue_upstream_error",
+                                               "message": f"npu-queue: {e}"}})
+        finally:
+            conn.close()
+            self.close_connection = True
+
+
+class Server(http.server.ThreadingHTTPServer):
+    daemon_threads = True
+    allow_reuse_address = True
+
+
+def status():
+    url = f"http://{LISTEN[0]}:{LISTEN[1]}/queue"
+    try:
+        with urllib.request.urlopen(url, timeout=2) as r:
+            s = json.load(r)
+    except OSError as e:
+        print(f"npu-queue injoignable ({e})")
+        return 1
+    r = s["running"]
+    if r:
+        print(f"▶ {r['client']} [{r['priority']}] en cours depuis {r['running_s']}s "
+              f"(a attendu {r['waited_s']}s)")
+    else:
+        print("▶ NPU libre")
+    for w in s["waiting"]:
+        print(f"  {w['position']}. {w['client']} [{w['priority']}] attend depuis {w['waited_s']}s")
+    print(f"servies: {s['served']}  abandonnées: {s['dropped']}")
+    return 0
+
+
+def main():
+    if sys.argv[1:] == ["status"]:
+        sys.exit(status())
+    srv = Server(LISTEN, Handler)
+    log(f"npu-queue on {LISTEN[0]}:{LISTEN[1]} -> {UPSTREAM[0]}:{UPSTREAM[1]}")
+    srv.serve_forever()
+
+
+if __name__ == "__main__":
+    main()

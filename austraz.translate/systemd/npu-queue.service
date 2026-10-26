@@ -1,0 +1,12 @@
+[Unit]
+Description=NPU request queue in front of Lemonade (127.0.0.1:13306 -> 13305)
+After=lemond.service
+Wants=lemond.service
+
+[Service]
+ExecStart=%h/.config/omarchy/bin/npu-queue
+Restart=on-failure
+RestartSec=2s
+
+[Install]
+WantedBy=default.target

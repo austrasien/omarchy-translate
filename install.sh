@@ -28,6 +28,7 @@ link_plugin austraz.notifications
 chmod +x \
   "$ROOT/austraz.translate/bin/omarchy-llm-translate" \
   "$ROOT/austraz.translate/bin/omarchy-llm-translate-region" \
+  "$ROOT/austraz.translate/bin/npu-queue" \
   "$ROOT/austraz.translate/llm/translate.sh" \
   "$ROOT/austraz.translate/capture-primary.sh" \
   "$ROOT/austraz.notifications/copy-to-clipboard.sh" \
@@ -39,6 +40,8 @@ ln -sfn "$PLUGINS/austraz.translate/bin/omarchy-llm-translate-region" \
   "$BIN/omarchy-llm-translate-region"
 chmod +x "$BIN/omarchy-llm-translate" "$BIN/omarchy-llm-translate-region"
 echo "linked $BIN/omarchy-llm-translate{,-region}"
+ln -sfn "$PLUGINS/austraz.translate/bin/npu-queue" "$BIN/npu-queue"
+echo "linked $BIN/npu-queue (optional NPU queue, not enabled)"
 
 if [[ ! -f $CONFIG/llm.conf ]]; then
   cp "$ROOT/austraz.translate/llm/llm.conf.example" "$CONFIG/llm.conf"
@@ -66,4 +69,13 @@ Next:
    omarchy restart shell
 
 Do not enable austraz.translate unless you want the optional overlay chip.
+
+Optional — NPU queue (several tools sharing one Lemonade model):
+
+   systemctl --user link ~/.config/omarchy/plugins/austraz.translate/systemd/npu-queue.service
+   systemctl --user enable --now npu-queue.service
+
+   then in ~/.config/omarchy/llm.conf:
+   LEMONADE_HOST=http://127.0.0.1:13306
+   LLM_QUEUE_WAIT=600
 EOF

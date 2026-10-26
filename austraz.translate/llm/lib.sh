@@ -305,6 +305,49 @@ llm_acquire_lock() {
   LLM_HOLDING_LOCK=1
 }
 
+# With npu-queue (LLM_QUEUE_WAIT > 0) the queue serializes inference, so the lock
+# only needs to cover model load/unload: drop it before waiting in the queue, or
+# other jobs skip on the lock for minutes. Without the queue, keep holding it.
+llm_release_lock() {
+  ((${LLM_QUEUE_WAIT:-0} > 0)) || return 0
+  ((LLM_HOLDING_LOCK)) || return 0
+  flock -u 8 2>/dev/null || true
+  exec 8>&-
+  LLM_HOLDING_LOCK=0
+}
+
+# Interactive callers: say so when the npu-queue is not empty.
+llm_queue_notify() {
+  ((${LLM_QUEUE_WAIT:-0} > 0)) || return 0
+  [[ ${LLM_PRIORITY:-background} == interactive ]] || return 0
+  local q n
+  q=$(curl -sf --max-time 1 "${LEMONADE_HOST%/}/queue" 2>/dev/null) || return 0
+  n=$(jq -r '(if .running then 1 else 0 end) + (.waiting | length)' <<<"$q" 2>/dev/null) || return 0
+  ((n > 0)) && llm_notify -t 5000 "${LLM_LABEL:-LLM local}" "NPU occupé — en file d'attente ($n devant)"
+  return 0
+}
+
+# POST a JSON file to Lemonade (through npu-queue when LLM_QUEUE_WAIT > 0). Prints the body.
+# 0 = ok, 2 = queue busy (503: waited LLM_QUEUE_WAIT or queue full), 1 = other error.
+llm_queue_post() {
+  local url=$1 jsonf=$2 timeout=$3 wait=${LLM_QUEUE_WAIT:-0} bodyf code
+  local -a queue=()
+  if ((wait > 0)); then
+    queue=(-H "X-NPU-Priority: ${LLM_PRIORITY:-background}"
+      -H "X-NPU-Max-Wait: $wait"
+      -H "X-NPU-Client: ${LLM_CLIENT:-llm}")
+  fi
+  bodyf=$(mktemp)
+  code=$(curl -s -o "$bodyf" -w '%{http_code}' --max-time $((wait + timeout)) "$url" \
+    -H 'Content-Type: application/json' "${queue[@]}" \
+    --data-binary @"$jsonf") || code=000
+  case $code in
+    200) cat "$bodyf"; rm -f "$bodyf"; return 0 ;;
+    503) llm_log "queue busy: ${LLM_CLIENT:-llm} gave up after ${wait}s"; rm -f "$bodyf"; return 2 ;;
+    *) llm_log "post failed http=$code client=${LLM_CLIENT:-llm}"; rm -f "$bodyf"; return 1 ;;
+  esac
+}
+
 lemonade_wait_ready() {
   local base=$1 want=$2 i health loaded bh
   for i in $(seq 1 60); do
@@ -435,9 +478,14 @@ llm_chat() {
       }' >"$jsonf"
   fi
 
-  resp=$(curl -sf --max-time "$timeout" "$base/chat/completions" \
-    -H 'Content-Type: application/json' \
-    --data-binary @"$jsonf") || {
+  llm_release_lock
+  llm_queue_notify
+  local post_status=0
+  resp=$(llm_queue_post "$base/chat/completions" "$jsonf" "$timeout") || post_status=$?
+  if ((post_status == 2)); then
+    rm -f "$jsonf"
+    return 2
+  elif ((post_status != 0)); then
     if [[ ${LLM_CHAT_RETRY:-1} != 1 ]]; then
       llm_log "chat curl failed timeout=$timeout model=$model"
       rm -f "$jsonf"
@@ -449,14 +497,14 @@ llm_chat() {
       rm -f "$jsonf"
       return 1
     }
-    resp=$(curl -sf --max-time "$timeout" "$base/chat/completions" \
-      -H 'Content-Type: application/json' \
-      --data-binary @"$jsonf") || {
+    post_status=0
+    resp=$(llm_queue_post "$base/chat/completions" "$jsonf" "$timeout") || post_status=$?
+    if ((post_status != 0)); then
       llm_log "chat curl failed timeout=$timeout model=$model"
       rm -f "$jsonf"
-      return 1
-    }
-  }
+      return "$post_status"
+    fi
+  fi
   rm -f "$jsonf"
   note_vision_use
   content=$(jq -r '.choices[0].message.content // empty' <<<"$resp")
@@ -522,9 +570,11 @@ llm_see() {
       }]
     }' >"$jsonf"
   rm -f "$imgf"
-  resp=$(curl -sf --max-time "$timeout" "$base/chat/completions" \
-    -H 'Content-Type: application/json' \
-    --data-binary @"$jsonf") || { rm -f "$jsonf"; return 1; }
+  llm_release_lock
+  llm_queue_notify
+  local post_status=0
+  resp=$(llm_queue_post "$base/chat/completions" "$jsonf" "$timeout") || post_status=$?
+  ((post_status == 0)) || { rm -f "$jsonf"; return "$post_status"; }
   rm -f "$jsonf"
   note_vision_use
   jq -r '.choices[0].message.content // empty' <<<"$resp" | llm_strip_think | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//'

@@ -2,6 +2,10 @@
 # Sourced by austraz.translate/llm/lib.sh
 
 LEMONADE_HOST="${LEMONADE_HOST:-http://127.0.0.1:13305}"
+# Optional npu-queue (austraz.translate/bin/npu-queue): point LEMONADE_HOST at
+# http://127.0.0.1:13306 and set how long a job may wait for the NPU (seconds).
+# 0 = no queue: talk to Lemonade directly, as before.
+LLM_QUEUE_WAIT="${LLM_QUEUE_WAIT:-0}"
 OLLAMA_HOST="${OLLAMA_HOST:-http://127.0.0.1:11434}"
 
 # One NPU slot: same FLM for chat + vision so tools never evict each other.

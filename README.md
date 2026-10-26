@@ -48,6 +48,7 @@ Omarchy already has screenshots, OCR, and notifications. This repo wires a **one
 | `austraz.translate/llm/lib.sh` | Lemonade client, NPU slot, **never evict a foreign model** |
 | `austraz.translate/bin/omarchy-llm-translate-region` | PATH wrapper for Super+Shift+T (`--region`) |
 | `austraz.translate/bin/omarchy-llm-translate` | PATH wrapper without `--region` (selection / `--file`) |
+| `austraz.translate/bin/npu-queue` | **Optional** priority queue in front of Lemonade: one inference at a time on the NPU (`systemd/npu-queue.service`) |
 | `austraz.notifications/` | Clone of `omarchy.notifications` — full body + custom lifetime **only** for `app=austraz.translate`; right-click a **Screenshot renamed** toast copies the image |
 | `austraz.translate/Overlay.qml` | Optional cursor chip (`--menu`). **Leave disabled** |
 
@@ -75,6 +76,24 @@ Omarchy already has screenshots, OCR, and notifications. This repo wires a **one
 ### 🔒 NPU queue
 - Shares `${XDG_RUNTIME_DIR}/image-autoname.lock`.
 - If another model occupies the slot, the job waits or bails with “NPU occupé” — it does **not** unload a model it did not load.
+
+### 🚦 Optional: `npu-queue`
+When several tools share one model (translate, screenshot naming, a local coding agent, the Lemonade app…), they all hit the NPU at once and the slow ones time out — while FastFlowLM keeps computing the abandoned request. `npu-queue` sits on `127.0.0.1:13306` in front of Lemonade (`13305`):
+
+- **One inference at a time.** Chat / messages / completions wait in a queue; `/health`, `/models`, `/load`… pass straight through.
+- **Priorities** via the `X-NPU-Priority` header: `interactive` (translate) > `agent` (default: coding agents, the Lemonade app) > `background`. FIFO within a level; the running request is never preempted.
+- **No ghost requests.** A client that gives up while waiting is dropped before it reaches the NPU.
+- **Bounded.** `X-NPU-Max-Wait` (default 600 s) → `503`, which `lib.sh` reports as “NPU occupé”. A backend silent for 600 s → `504`, and the queue moves on.
+- `npu-queue status` shows what runs and who waits. Python standard library only.
+
+Enable it (install.sh links the binary but does not start it):
+
+```sh
+systemctl --user link ~/.config/omarchy/plugins/austraz.translate/systemd/npu-queue.service
+systemctl --user enable --now npu-queue.service
+```
+
+Then set `LEMONADE_HOST=http://127.0.0.1:13306` and `LLM_QUEUE_WAIT=600` in `~/.config/omarchy/llm.conf`. Point other clients at `13306` too (Lemonade app: *Settings → Base URL*; Claude Code: `ANTHROPIC_BASE_URL`); anything that still calls `13305` bypasses the queue.
 
 ## 🛠 Installation
 
@@ -132,6 +151,11 @@ omarchy restart shell
 
 ## 🧾 Changelog
 
+### v1.4.0
+- Optional **`npu-queue`**: priority queue in front of Lemonade, one NPU inference at a time, waiting clients dropped before they reach the NPU, `npu-queue status`.
+- `lib.sh` talks to it when `LLM_QUEUE_WAIT > 0`: sends its priority, waits up to `LLM_QUEUE_WAIT`, maps `503` to “NPU occupé”, releases the shared lock before queueing. Translate runs as `interactive` and toasts **en file d'attente (N devant)** when it has to wait. With `LLM_QUEUE_WAIT=0` (default) nothing changes.
+- `austraz.notifications` **1.0.6**: left-click a Taildrop toast opens the received file.
+
 ### v1.3.0
 - Notification popups show on the built-in screen (`eDP-*`) only. External monitors stay clean. With no `eDP` output (lid closed), they fall back to every screen.
 
@@ -156,6 +180,8 @@ omarchy restart shell
 | `LLM_TEXT_SMALL` | `qwen3.5-4b-FLM` | Preferred chat id (multimodal; one NPU slot with vision) |
 | `LLM_VISION` | `qwen3.5-4b-FLM` | Same family so screenshot naming and translate do not swap models |
 | `VISION_KEEP_ALIVE` | `300` | Seconds before idle unload of a model **we** loaded |
+| `LLM_QUEUE_WAIT` | `0` | Seconds a job may wait in `npu-queue` (`0` = no queue, direct Lemonade) |
+| `LLM_PRIORITY` | `background` | Queue priority for callers of `lib.sh` (translate sets `interactive`) |
 
 Do **not** set `qwen3-it:4b` / `qwen3-it-4b-FLM` — FastFlowLM 1.0.4 SIGABRTs on that family.
 
