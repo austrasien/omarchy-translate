@@ -48,15 +48,24 @@ Item {
   // The minimap (austraz.minimap) sits in a screen corner; when it takes
   // the top-right one, toasts move to the top-left so they never cover it.
   property var minimapConfig: ({})
+  property bool minimapPresent: false
   readonly property bool toastsLeft: minimapConfig.visible !== false
     && minimapConfig.corner === "top-right"
+  // The minimap's notifications map shows them instead (its hideToasts
+  // option, on by default): the toasts still live (state files, timers,
+  // history), only their window stays hidden.
+  readonly property bool minimapTakesToasts: minimapConfig.visible !== false
+    && minimapConfig.hideToasts !== false && minimapPresent
   FileView {
     path: Quickshell.env("HOME") + "/.config/omarchy/minimap.json"
     watchChanges: true
     printErrors: false
     onFileChanged: reload()
-    onLoaded: { try { service.minimapConfig = JSON.parse(text() || "{}") || ({}) } catch (e) {} }
-    onLoadFailed: service.minimapConfig = ({})
+    onLoaded: {
+      try { service.minimapConfig = JSON.parse(text() || "{}") || ({}) } catch (e) {}
+      service.minimapPresent = true
+    }
+    onLoadFailed: { service.minimapConfig = ({}); service.minimapPresent = false }
   }
   readonly property string barPosition: shell && shell.barConfig ? String(shell.barConfig.position || "top") : "top"
   readonly property bool barVertical: barPosition === "left" || barPosition === "right"
@@ -1002,7 +1011,7 @@ Item {
       id: popupWindow
       required property var modelData
       screen: modelData
-      visible: popupModel.count > 0
+      visible: popupModel.count > 0 && !service.minimapTakesToasts
 
       WlrLayershell.namespace: "omarchy-notifications"
       WlrLayershell.layer: WlrLayer.Overlay
