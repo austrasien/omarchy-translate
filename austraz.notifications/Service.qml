@@ -946,6 +946,19 @@ Item {
       return "ok"
     }
 
+    // Fire the default action of the popup with that notification id (the
+    // `id` in its state file), then dismiss it. The minimap's notifications
+    // map calls this when its ring is clicked, the toast being hidden.
+    function invoke(id: string): string {
+      for (var i = 0; i < popupModel.count; i++) {
+        if (String(popupModel.get(i).id) === String(id)) {
+          service.invokePopupDefault(i)
+          return "ok"
+        }
+      }
+      return "none"
+    }
+
     // Fire the default action on the most recent popup, then dismiss it.
     function invokeLast(): string {
       if (popupModel.count === 0) return "none"
