@@ -85,6 +85,7 @@ When several tools share one model (translate, screenshot naming, a local coding
 - **No ghost requests.** A client that gives up while waiting is dropped before it reaches the NPU.
 - **Bounded.** `X-NPU-Max-Wait` (default 600 s) → `503`, which `lib.sh` reports as “NPU occupé”. A backend silent for 600 s → `504`, and the queue moves on.
 - `npu-queue status` shows what runs and who waits. Python standard library only.
+- **Reasoning that does not leak.** FastFlowLM keeps reasoning as a *global* switch set by the last request: one `enable_thinking: false` from a quick script turns it off for your next chat too. With `NPU_QUEUE_THINK=on` (or `off`) the queue pins `think` on every request — `false` only for requests that ask for no reasoning — and flips the switch with a 1-token call before Anthropic-style requests (`/v1/messages`), where Lemonade ignores `think`. Per request: `X-NPU-Think: on|off`, or a model id ending in `:nothink` / `:think` (the suffix is stripped) — handy for a client's small background model, e.g. Claude Code's `ANTHROPIC_DEFAULT_HAIKU_MODEL=<model>:nothink` so session titles do not spend a minute reasoning. Default `keep` leaves bodies untouched.
 
 Enable it (install.sh links the binary but does not start it):
 
@@ -150,6 +151,9 @@ omarchy restart shell
 ```
 
 ## 🧾 Changelog
+
+### v1.4.1
+- `npu-queue`: optional `NPU_QUEUE_THINK=on|off|keep` (default `keep`) pins FastFlowLM's reasoning per request, so a script asking for no reasoning no longer switches it off for the next chat or agent. `X-NPU-Think` or a `:nothink` / `:think` model suffix overrides it per request.
 
 ### v1.4.0
 - Optional **`npu-queue`**: priority queue in front of Lemonade, one NPU inference at a time, waiting clients dropped before they reach the NPU, `npu-queue status`.

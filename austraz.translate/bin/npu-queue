@@ -10,6 +10,17 @@ Headers (all optional):
   X-NPU-Priority  interactive | agent | background   (default: agent)
   X-NPU-Max-Wait  seconds to wait in queue before 503 (default: NPU_QUEUE_MAX_WAIT)
   X-NPU-Client    label shown in `npu-queue status`
+  X-NPU-Think     on | off: force reasoning for this request (see NPU_QUEUE_THINK)
+
+A model id ending in ":nothink" or ":think" is sent without the suffix and with
+reasoning forced off/on, e.g. point a client's small background model (Claude
+Code's Haiku: titles, summaries) at "<model>:nothink".
+
+NPU_QUEUE_THINK=on|off|keep (default keep). FastFlowLM keeps reasoning as a global
+switch set by the last request (`think`), and `enable_thinking: false` turns it off
+for everyone after. With on/off the queue writes an explicit `think` into every
+inference body: false when the request asks for no reasoning (enable_thinking,
+thinking or think false, thinking.type "disabled"), else the default.
 
   npu-queue            run the server
   npu-queue status     show running + waiting requests
@@ -35,6 +46,7 @@ MAX_WAITING = int(os.environ.get("NPU_QUEUE_MAX_WAITING", "32"))
 # No upstream byte for this long = backend hung (e.g. FLM after suspend): 504, free the slot.
 # 32k ctx at ~65 tok/s prefill is ~8 min, so keep this above that.
 INACTIVITY = float(os.environ.get("NPU_QUEUE_INACTIVITY", "600"))
+THINK_DEFAULT = os.environ.get("NPU_QUEUE_THINK", "keep").strip().lower()
 
 PRIORITIES = {"interactive": 0, "agent": 1, "background": 2}
 INFERENCE_SUFFIXES = ("/chat/completions", "/completions", "/responses",
@@ -46,6 +58,61 @@ HOP_BY_HOP = {"connection", "keep-alive", "proxy-authenticate", "proxy-authoriza
 
 def log(msg):
     print(msg, file=sys.stderr, flush=True)
+
+
+def wants_no_thinking(req):
+    if req.get("enable_thinking") is False or req.get("think") is False:
+        return True
+    t = req.get("thinking")
+    if t is False:
+        return True
+    return isinstance(t, dict) and str(t.get("type", "")).lower() == "disabled"
+
+
+def with_think(body, header):
+    """Pin reasoning per request so it never leaks from the previous one.
+
+    Returns (body, wanted, model): wanted is True/False, or None when left alone.
+    """
+    mode = (header or THINK_DEFAULT).strip().lower()
+    try:
+        req = json.loads(body)
+    except ValueError:
+        return body, None, None
+    if not isinstance(req, dict):
+        return body, None, None
+    model = req.get("model")
+    if isinstance(model, str) and model.endswith((":nothink", ":think")):
+        base, suffix = model.rsplit(":", 1)
+        req["model"] = base
+        mode = "off" if suffix == "nothink" else "on"
+    if mode not in ("on", "off"):
+        return json.dumps(req, ensure_ascii=False).encode(), None, req.get("model")
+    wanted = not (mode == "off" or wants_no_thinking(req))
+    req["think"] = wanted
+    return json.dumps(req, ensure_ascii=False).encode(), wanted, req.get("model")
+
+
+def set_think_switch(model, wanted):
+    """Flip FLM's global reasoning switch with a 1-token chat request.
+
+    Lemonade drops `think` on /v1/messages, so Anthropic clients (Claude Code)
+    cannot set it themselves. Called with the gate held.
+    """
+    body = json.dumps({"model": model, "think": wanted, "max_tokens": 1, "stream": False,
+                       "messages": [{"role": "user", "content": "."}]}).encode()
+    conn = http.client.HTTPConnection(*UPSTREAM, timeout=120)
+    try:
+        conn.request("POST", "/api/v1/chat/completions", body=body,
+                     headers={"Content-Type": "application/json"})
+        resp = conn.getresponse()
+        resp.read()
+        return resp.status == 200
+    except OSError as e:
+        log(f"think switch failed: {e}")
+        return False
+    finally:
+        conn.close()
 
 
 class Ticket:
@@ -78,6 +145,7 @@ class Gate:
         self.seq = itertools.count()
         self.served = 0
         self.dropped = 0
+        self.think = None  # FLM reasoning switch as last set through the queue
 
     def ticket(self, priority, client, path):
         return Ticket(next(self.seq), priority, client, path)
@@ -197,6 +265,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
             max_wait = MAX_WAIT
         client = (self.headers.get("X-NPU-Client")
                   or (self.headers.get("User-Agent") or "?").split()[0])[:60]
+        body, wanted, model = with_think(body, self.headers.get("X-NPU-Think"))
         t = GATE.ticket(prio, client, self.path.split("?")[0])
         result = GATE.acquire(t, max_wait, self.client_gone)
         if result != "ok":
@@ -209,6 +278,13 @@ class Handler(http.server.BaseHTTPRequestHandler):
             return
         log(f"start: {client} {prio} waited {t.started - t.enqueued:.1f}s")
         try:
+            if wanted is not None:
+                if not self.path.split("?")[0].rstrip("/").endswith("/chat/completions"):
+                    if GATE.think != wanted and model and set_think_switch(model, wanted):
+                        log(f"think switch -> {'on' if wanted else 'off'} for {client}")
+                        GATE.think = wanted
+                else:
+                    GATE.think = wanted
             self.forward(body)
         finally:
             GATE.release(t)
